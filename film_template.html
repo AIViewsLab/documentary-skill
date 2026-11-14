@@ -1,0 +1,237 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@500;600;700&display=block" rel="stylesheet">
+<script src="lib/d3.min.js"></script>
+<style>
+/* The Panama Canal — documentary. All scenes are drawn in code. window.seek(t) draws the frame at t seconds. */
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#06101C;font-family:Inter,sans-serif;color:#EEF2F7}
+#bg{position:absolute;inset:0;background:radial-gradient(ellipse 1200px 800px at 40% 50%,#0F2235 0%,#06101C 75%)}
+svg{position:absolute;inset:0}
+.scene{position:absolute;inset:0;opacity:0}
+.h1{font:700 96px/1 Oswald;letter-spacing:3px;text-transform:uppercase}
+.h2{font:500 40px Inter;color:#9FB3C8}
+.big{font:700 150px/1 Oswald;color:#F2C14E}
+.lbl{font:600 30px Inter;color:#9FB3C8;text-transform:uppercase;letter-spacing:3px}
+.tag{display:inline-block;padding:8px 18px;border-radius:10px;font:700 26px Inter}
+.vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55) 100%)}
+.note{position:absolute;left:0;right:0;bottom:40px;text-align:center;font:500 22px Inter;color:#6F829A}
+</style></head><body>
+<div id="bg"></div>
+<svg id="map" width="1920" height="1080"></svg>
+
+<!-- Title -->
+<div class="scene" id="sTitle" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px">
+ <div class="lbl">A short documentary</div><div class="h1" style="font-size:130px">The Panama Canal</div><div class="h2" style="color:#F2C14E">The $375 Million Shortcut</div></div>
+
+<!-- Map labels -->
+<div class="scene" id="sMapTxt">
+ <div style="position:absolute;right:120px;top:300px;width:620px">
+  <div class="lbl" id="mLbl">New York → San Francisco</div>
+  <div class="big" id="mNum">0</div><div class="h2" style="margin-top:6px">miles</div>
+  <div id="mSave" style="margin-top:40px;opacity:0"><span class="tag" style="background:#F2C14E;color:#06101C">SHORTCUT: NEARLY 8,000 MILES</span></div>
+ </div>
+ <div id="ancon" style="position:absolute;right:120px;top:300px;width:620px;opacity:0">
+  <div class="lbl">August 15, 1914</div><div class="h1" style="font-size:84px;margin-top:14px">SS Ancon</div>
+  <div class="h2" style="margin-top:18px">Atlantic → Pacific<br>in a single day</div></div>
+</div>
+
+<!-- Timeline -->
+<div class="scene" id="sTime">
+ <div style="position:absolute;left:140px;right:140px;top:170px;display:flex;justify-content:space-between;align-items:flex-end">
+  <div><div class="lbl" id="tLbl"></div><div class="h1" id="tHead" style="margin-top:12px;font-size:84px"></div></div>
+  <div id="tFlag" style="display:flex;width:150px;height:100px;border-radius:8px;overflow:hidden"></div></div>
+ <svg width="1920" height="1080" style="position:absolute;inset:0"><g id="tl"></g></svg>
+ <div id="tBox" style="position:absolute;left:140px;top:640px;width:1640px;display:flex;gap:40px"></div>
+ <div class="note" id="tNote"></div>
+</div>
+
+<!-- Digging + numbers -->
+<div class="scene" id="sDig">
+ <div style="position:absolute;left:140px;top:120px"><div class="lbl">1904 – 1914</div><div class="h1" style="margin-top:12px;font-size:84px">The Culebra Cut</div></div>
+ <svg width="1920" height="1080" style="position:absolute;inset:0"><g id="dig"></g></svg>
+ <div id="dNums" style="position:absolute;left:140px;right:140px;top:760px;display:flex;justify-content:space-between"></div>
+ <div class="note">Sources: Panama Canal Authority; U.S. hospital records 1904–1914</div>
+</div>
+
+<!-- Lock -->
+<div class="scene" id="sLock">
+ <div style="position:absolute;left:140px;top:110px"><div class="lbl">Gatun Locks</div><div class="h1" style="margin-top:12px;font-size:84px">A Staircase for Ships</div></div>
+ <svg width="1920" height="1080" style="position:absolute;inset:0"><g id="lock"></g></svg>
+</div>
+
+<!-- Ending -->
+<div class="scene" id="sEnd" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px">
+ <div class="h1" style="font-size:120px">The Panama Canal</div><div class="h2">1904 – 1914</div><div class="lbl" style="margin-top:40px;color:#F2C14E">The End</div></div>
+<div class="vig"></div>
+
+<script>
+const ap=x=>Math.max(0,Math.min(1,x)), ease=x=>{x=ap(x);return 1-Math.pow(1-x,3)}, eio=x=>{x=ap(x);return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2};
+let P, feats, proj, path;
+const fmt=n=>Math.round(n).toLocaleString("en-US");
+// time of a word in the film: chapter, word, (search after N seconds)
+function W(ch,word,after=0){const c=P.ch[ch];for(const w of c.words){if(w.s>=after&&w.w.toLowerCase().replace(/[^a-z0-9,$]/g,"").includes(word.toLowerCase()))return c.start+w.s;}console.warn("word not found",ch,word);return c.start;}
+function S(ch){return P.ch[ch].start} function E(ch){return P.ch[ch].start+P.ch[ch].dur}
+
+function decode(topo,obj){const[sx,sy]=topo.transform.scale,[tx,ty]=topo.transform.translate;
+ const arcs=topo.arcs.map(a=>{let x=0,y=0;return a.map(([dx,dy])=>{x+=dx;y+=dy;return[x*sx+tx,y*sy+ty];});});
+ const arc=i=>i<0?arcs[~i].slice().reverse():arcs[i];
+ const ring=r=>{const o=[];r.forEach((i,k)=>{const a=arc(i);(k?a.slice(1):a).forEach(p=>o.push(p));});return o;};
+ return obj.geometries.map(g=>({type:"Feature",properties:g.properties,geometry:g.type==="Polygon"?{type:"Polygon",coordinates:g.arcs.map(ring)}:{type:"MultiPolygon",coordinates:g.arcs.map(p=>p.map(ring))}}));}
+
+const LONG=[[-74,40.7],[-66,33],[-50,10],[-34.5,-7],[-39,-23],[-52,-36],[-63,-48],[-67.3,-56.3],[-75,-52],[-77,-40],[-73,-25],[-81,-8],[-92,5],[-106,17],[-117,28],[-122.4,37.8]];
+const SHORT=[[-74,40.7],[-73,30],[-76,20],[-79.9,9.35],[-79.5,8.9],[-86,9],[-100,14],[-112,22],[-122.4,37.8]];
+let gMap,lLong,lShort,lenL,lenS,cities;
+
+window.ready=Promise.all([fetch("plan.json").then(r=>r.json()),fetch("lib/countries-110m.json").then(r=>r.json())]).then(([p,topo])=>{
+ P=p; window.DURATION=P.duration;
+ feats=decode(topo,topo.objects.countries);
+ proj=d3.geoMercator().fitExtent([[160,60],[1140,1030]],{type:"MultiPoint",coordinates:[[-128,52],[-34,-57]]});
+ path=d3.geoPath(proj);
+ const svg=d3.select("#map"); gMap=svg.append("g");
+ gMap.selectAll("path").data(feats).enter().append("path").attr("d",path)
+  .attr("fill",d=>d.properties.name==="Panama"?"#2C4A66":"#16293D").attr("stroke","#0A1726").attr("stroke-width",1);
+ const ln=c=>path({type:"LineString",coordinates:c});
+ lLong=gMap.append("path").attr("d",ln(LONG)).attr("fill","none").attr("stroke","#E5484D").attr("stroke-width",6).attr("stroke-linecap","round");
+ lShort=gMap.append("path").attr("d",ln(SHORT)).attr("fill","none").attr("stroke","#F2C14E").attr("stroke-width",7).attr("stroke-linecap","round");
+ lenL=lLong.node().getTotalLength(); lenS=lShort.node().getTotalLength();
+ cities=gMap.append("g");
+ [["New York",[-74,40.7],1],["San Francisco",[-122.4,37.8],-1],["Cape Horn",[-67.3,-56.3],1],["Panama",[-79.7,9.1],1]].forEach(([n,c,s])=>{
+  const [x,y]=proj(c); const g=cities.append("g").attr("class","city").attr("data-n",n);
+  g.append("circle").attr("cx",x).attr("cy",y).attr("r",9).attr("fill","#fff");
+  g.append("text").attr("x",x+18*s).attr("y",y+9).attr("text-anchor",s>0?"start":"end").attr("font","600 28px Inter").attr("style","font:600 28px Inter;paint-order:stroke;stroke:#06101C;stroke-width:6px").attr("fill","#fff").text(n);});
+ buildTimeline(); buildDig(); buildLock();
+ return Promise.all(["700 40px Oswald","500 40px Oswald","500 20px Inter","600 20px Inter","700 20px Inter"].map(f=>document.fonts.load(f))).then(()=>document.fonts.ready);
+}).then(()=>seek(0));
+
+// ---------- timeline ----------
+let tlG;
+function buildTimeline(){tlG=d3.select("#tl");}
+function drawTimeline(T,a,b,marks,prog){ // marks: [year,label,tShow]
+ tlG.selectAll("*").remove();
+ const x=d3.scaleLinear().domain([a,b]).range([160,1760]), y=520;
+ tlG.append("line").attr("x1",160).attr("x2",1760).attr("y1",y).attr("y2",y).attr("stroke","#2A3E55").attr("stroke-width",6).attr("stroke-linecap","round");
+ tlG.append("line").attr("x1",160).attr("x2",160+1600*prog).attr("y1",y).attr("y2",y).attr("stroke","#F2C14E").attr("stroke-width",6).attr("stroke-linecap","round");
+ marks.forEach(([yr,l,ts])=>{const k=ease((T-ts)/0.5); if(k<=0)return; const xx=x(yr);
+  tlG.append("circle").attr("cx",xx).attr("cy",y).attr("r",16*k).attr("fill","#F2C14E");
+  tlG.append("text").attr("x",xx).attr("y",y-40).attr("text-anchor","middle").attr("opacity",k).attr("style","font:700 46px Oswald").attr("fill","#fff").text(yr);
+  tlG.append("text").attr("x",xx).attr("y",y+62).attr("text-anchor","middle").attr("opacity",k).attr("style","font:600 26px Inter").attr("fill","#9FB3C8").text(l);});
+}
+function flag(colors,vert){return colors.map(c=>`<div style="${vert?"flex:0 0 50%;height:50%":"flex:1"};background:${c}"></div>`).join("");}
+
+// ---------- cross-section (digging) ----------
+let digG;
+function buildDig(){digG=d3.select("#dig");}
+function drawDig(T,k){
+ digG.selectAll("*").remove();
+ const base=700, L=240, R=1680, mid=960;
+ const depth=60+280*k; // cut depth
+ const ground=`M${L},${base} L${L},420 Q600,300 ${mid-260},330 L${mid-120},${330+depth*0.9} L${mid+120},${330+depth*0.9} L${mid+260},330 Q1300,300 ${R},420 L${R},${base} Z`;
+ digG.append("path").attr("d",ground).attr("fill","#3A2E22").attr("stroke","#5A4630").attr("stroke-width",3);
+ digG.append("path").attr("d",`M${mid-120},${330+depth*0.9} L${mid+120},${330+depth*0.9}`).attr("stroke","#F2C14E").attr("stroke-width",5);
+ // small trains carrying earth out
+ for(let i=0;i<6;i++){const p=((T*0.25+i/6)%1); const x=mid-100+200*p; digG.append("rect").attr("x",x).attr("y",330+depth*0.9-26).attr("width",34).attr("height",22).attr("rx",4).attr("fill","#9FB3C8");}
+ digG.append("text").attr("x",mid).attr("y",280).attr("text-anchor","middle").attr("style","font:600 28px Inter").attr("fill","#9FB3C8").text("Continental Divide");
+}
+
+// ---------- lock diagram ----------
+let lockG;
+function buildLock(){lockG=d3.select("#lock");}
+function drawLock(T,k,show85){
+ lockG.selectAll("*").remove();
+ const sea=820, lake=470, steps=3, x0=200, w=360; // 3 steps, 85 ft
+ const lv=i=>sea-(sea-lake)*(i/steps);
+ // sea on the left
+ lockG.append("rect").attr("x",80).attr("y",sea).attr("width",x0-80+2).attr("height",200).attr("fill","#1E5A8A");
+ // steps
+ const shipStep=k*steps; // 0..3
+ for(let i=0;i<steps;i++){const x=x0+i*w, floor=lv(i)+110;
+  const filled=shipStep>i+1?lv(i+1):shipStep>i?lv(i)-(lv(i)-lv(i+1))*ease(shipStep-i):lv(i);
+  lockG.append("rect").attr("x",x).attr("y",filled).attr("width",w).attr("height",1080-filled).attr("fill","#1E5A8A");
+  lockG.append("rect").attr("x",x).attr("y",floor).attr("width",w).attr("height",1080-floor).attr("fill","#2B2620");
+  lockG.append("rect").attr("x",x+w-14).attr("y",lv(i+1)-30).attr("width",14).attr("height",floor-lv(i+1)+30).attr("fill","#9FB3C8");}
+ // lake
+ lockG.append("rect").attr("x",x0+steps*w).attr("y",lake).attr("width",1920).attr("height",700).attr("fill","#1E5A8A");
+ lockG.append("text").attr("x",x0+steps*w+200).attr("y",lake+80).attr("text-anchor","middle").attr("style","font:700 40px Oswald").attr("fill","#BFD9F2").text("GATUN LAKE");
+ // ship
+ const si=Math.min(steps-1,Math.floor(shipStep)), f=shipStep-si;
+ const wl=k>=1?lake:lv(si)-(lv(si)-lv(si+1))*ease(f);
+ const sx=x0+20+si*w+ (k>=1?w*steps-si*w+60:0);
+ lockG.append("path").attr("d",`M${sx},${wl-10} l250,0 l-30,40 l-190,0 z`).attr("fill","#E8ECF4");
+ lockG.append("rect").attr("x",sx+70).attr("y",wl-60).attr("width",90).attr("height",50).attr("rx",6).attr("fill","#E5484D");
+ // 85 ft measure
+ if(show85>0){const xm=x0+steps*w+40;
+  lockG.append("line").attr("x1",xm).attr("x2",xm).attr("y1",sea).attr("y2",sea-(sea-lake)*ease(show85)).attr("stroke","#F2C14E").attr("stroke-width",5);
+  lockG.append("text").attr("x",xm+20).attr("y",(sea+lake)/2+20).attr("opacity",ap(show85*2-1)).attr("style","font:700 72px Oswald").attr("fill","#F2C14E").text("85 FT");}
+}
+
+function show(id,a){const e=document.getElementById(id);e.style.opacity=a;}
+function fadeWin(T,a,b,f=0.6){return Math.min(ap((T-a)/f),ap((b-T)/f));}
+
+window.seek=function(T){
+ ["sTitle","sMapTxt","sTime","sDig","sLock","sEnd"].forEach(i=>show(i,0));
+ // ---- title
+ show("sTitle",fadeWin(T,0.2,P.title+0.2,0.7));
+ // ---- map (chapters 01, 02, 08)
+ const mapOn=Math.max(fadeWin(T,S("01")-0.3,E("02")+0.5,0.7),fadeWin(T,S("08")-0.4,P.duration+5,0.8));
+ gMap.attr("opacity",mapOn);
+ // routes
+ const tL0=W("02","tip"), tL1=W("02","13")+0.3, tS0=W("02","through",10), tS1=W("02","5",13)+0.3;
+ const inEnd=T>=S("08")-0.4;
+ const kL=inEnd?0:ease((T-tL0)/(tL1-tL0)), kS=inEnd?1:ease((T-tS0)/(tS1-tS0));
+ lLong.attr("stroke-dasharray",lenL).attr("stroke-dashoffset",lenL*(1-kL)).attr("opacity",T>tS0&&!inEnd?0.35:1);
+ lShort.attr("stroke-dasharray",lenS).attr("stroke-dashoffset",lenS*(1-kS));
+ cities.selectAll(".city").attr("opacity",function(){const n=this.dataset.n;
+  if(n==="Panama")return T>=W("01","single")-0.5&&T<S("02")?1:(T>=tS0?1:0);
+  if(n==="Cape Horn")return !inEnd&&T>=W("02","Cape")-0.3?1:0;
+  return T>=S("02")-0.2||inEnd?1:0;});
+ // text next to the map
+ const inMap=T>=S("02")-0.2&&T<E("02")+0.5;
+ show("sMapTxt",Math.max(inMap?mapOn:0,(T>=W("01","Ancon")-0.3&&T<S("02"))?mapOn:0));
+ document.getElementById("ancon").style.opacity=(T<S("02")-0.2)?ease((T-W("01","Ancon")+0.3)/0.5):0;
+ const num=T<tS0?13000*kL:5000*kS;
+ const showNum=T>=S("02")-0.2;
+ document.getElementById("mNum").textContent=showNum?fmt(num):"";
+ document.getElementById("mLbl").style.opacity=showNum?1:0; document.getElementById("mNum").nextElementSibling.style.opacity=showNum?1:0;
+ document.getElementById("mLbl").textContent=T<tS0?"Around Cape Horn":"Through Panama";
+ document.getElementById("mNum").style.color=T<tS0?"#E5484D":"#F2C14E";
+ document.getElementById("mSave").style.opacity=ease((T-W("02","8",15))/0.4);
+ // ---- timelines: 03, 04, 07
+ if(T>=S("03")-0.6&&T<E("04")+0.6 || T>=S("07")-0.6&&T<E("07")+0.6){
+  const a=T<E("04")+0.6?(T<S("04")?fadeWin(T,S("03")-0.4,S("04")+0.3,0.5):fadeWin(T,S("04")-0.3,E("04")+0.4,0.5)):fadeWin(T,S("07")-0.4,E("07")+0.4,0.6);
+  show("sTime",a);
+  const L=document.getElementById("tLbl"),H=document.getElementById("tHead"),F=document.getElementById("tFlag"),B=document.getElementById("tBox"),N=document.getElementById("tNote");
+  if(T<S("04")){ // French era
+   L.textContent="1881 – 1889";H.textContent="The French Attempt";F.innerHTML=flag(["#0055A4","#FFFFFF","#EF4135"]);
+   drawTimeline(T,1880,1890,[[1881,"Work begins",W("03","1881")],[1889,"Company collapses",W("03","1889")]],ease((T-W("03","1881"))/(W("03","1889")-W("03","1881"))));
+   const kD=ease((T-W("03","estimate"))/2.2);
+   B.innerHTML=`<div style="opacity:${ease((T-W("03","mosquitoes"))/0.5)}"><span class="tag" style="background:#E5484D">Yellow fever · Malaria</span></div>
+    <div style="opacity:${ap((T-W("03","estimate")+0.2)/0.4)}"><span class="lbl">Deaths</span><div class="big" style="color:#E5484D;font-size:120px">~${fmt(22000*kD)}</div></div>`;
+   N.textContent=T>=W("03","estimate")?"Estimate — the French kept no complete records (W. C. Gorgas)":"";
+  } else if(T<E("04")+0.6){ // U.S. era
+   L.textContent="1904";H.textContent="America Takes Over";F.innerHTML=flag(["#B22234","#FFFFFF","#B22234","#FFFFFF","#3C3B6E"]);
+   drawTimeline(T,1903,1915,[[1904,"U.S. buys the project",W("04","1904")],[1906,"Yellow fever gone",W("04","two")]],ease((T-W("04","1904"))/(W("04","two")-W("04","1904")+0.5))*0.25);
+   B.innerHTML=["Drained swamps","Screened windows","Sprayed breeding grounds"].map((s,i)=>`<div style="opacity:${ease((T-W("04",["drained","screened","sprayed"][i])+0.1)/0.4)}"><span class="tag" style="background:#1D3A57;color:#BFD9F2">✓ ${s}</span></div>`).join("");
+   N.textContent="Dr. William C. Gorgas, chief sanitary officer";
+  } else { // 1914 → 1999
+   L.textContent="1914 – 1999";H.textContent="Opening Day and Beyond";F.innerHTML=flag(["#FFFFFF","#D21034","#005293","#FFFFFF"],1);
+   F.style.flexWrap="wrap";
+   drawTimeline(T,1910,2002,[[1914,"SS Ancon · WWI begins",S("07")+0.3],[1977,"Treaty signed",W("07","December")-1.2],[1999,"Handed to Panama",W("07","December")]],ease((T-S("07"))/(W("07","1999")-S("07")+0.4)));
+   B.innerHTML=`<div style="opacity:${ease((T-W("07","December"))/0.5)}"><span class="lbl">December 31, 1999</span><div class="h1" style="font-size:64px;margin-top:10px">The canal belongs to Panama</div></div>`;
+   N.textContent="";
+  }
+  if(T<S("07")-0.6)document.getElementById("tFlag").style.flexWrap="nowrap";
+ }
+ // ---- 05 digging
+ if(T>=S("05")-0.6&&T<E("05")+0.6){show("sDig",fadeWin(T,S("05")-0.4,E("05")+0.4,0.5));
+  drawDig(T,ease((T-S("05"))/(W("05","200")-S("05"))));
+  const n=[["Earth moved","200,000,000+",W("05","200"),"cubic yards"],["Cost","$375,000,000",W("05","375"),"U.S. dollars"],["Recorded deaths","5,609",W("05","609"),"1904 – 1914"]];
+  document.getElementById("dNums").innerHTML=n.map(([l,v,t0,u],i)=>`<div style="opacity:${ease((T-t0+0.2)/0.4)};text-align:${["left","center","right"][i]}"><div class="lbl">${l}</div><div class="big" style="font-size:88px;color:${i===2?"#E5484D":"#F2C14E"}">${v}</div><div class="h2" style="font-size:28px">${u}</div></div>`).join("");}
+ // ---- 06 lock
+ if(T>=S("06")-0.6&&T<E("06")+0.6){show("sLock",fadeWin(T,S("06")-0.4,E("06")+0.4,0.5));
+  drawLock(T,ap((T-W("06","staircase"))/(W("06","Lake")-W("06","staircase"))),ap((T-W("06","85"))/0.8));}
+ // ---- 08 ending
+ if(T>=E("08")-0.5) show("sEnd",ease((T-E("08")+0.5)/1.0));
+ if(T>=E("08")-0.5) gMap.attr("opacity",mapOn*(1-ease((T-E("08")+0.5)/1.0))*1);
+};
+</script>
+</body></html>
